@@ -1,0 +1,14 @@
+# Everything here is already in the Kaggle GPU image; the pins record what the
+# code was developed and tested against.
+numpy>=1.24
+scipy>=1.10
+torch>=2.0
+pandas>=2.0
+matplotlib>=3.7
+pillow>=9.0
+tqdm>=4.65
+click>=8.0
+requests>=2.28
+
+# tests only
+pytest>=7.0
