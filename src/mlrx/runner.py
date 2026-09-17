@@ -71,14 +71,39 @@ class Config:
         if self.method == "heun":
             return 2 * self.num_steps - 1
         if self.method == "rx":
-            return self.num_steps
+            return self.num_steps + self._exact_overhead(self.num_steps)
         if self.method == "rx_edm":
             nh = (self.n_heun_steps if self.n_heun_steps >= 0
                   else int(round(self.heun_fraction * self.num_steps)))
             nh = max(0, min(self.num_steps, nh))
             tail = self.num_steps - nh
-            return 2 * nh - (1 if tail == 0 else 0) + tail
+            return (2 * nh - (1 if tail == 0 else 0) + tail
+                    + self._exact_overhead(tail))
         raise ValueError(f"unknown method {self.method!r}")
+
+    def _exact_overhead(self, steps):
+        """Extra evaluations spent by ``reuse_mode="exact"`` over ``steps``.
+
+        Mirrors the sampler: each coarse level of ``n`` sub-steps re-evaluates
+        at every node but its first.  Zero for the reuse modes.
+        """
+        if self.reuse_mode != "exact" or steps < 2:
+            return 0
+        from . import schedules
+        extra = 0
+        plan = schedules.partition_blocks(steps, self.frequency)
+        for b in plan:
+            if not b.extrapolate or b.n_steps < 2:
+                continue
+            if self.n_levels > 2:
+                try:
+                    levels = schedules.nested_steps(b.n_steps, self.n_levels)
+                except ValueError:
+                    continue
+            else:
+                levels = [1, b.n_steps]
+            extra += sum(n - 1 for n in levels[:-1])
+        return extra
 
     def describe(self):
         if self.method == "rx":
@@ -282,21 +307,38 @@ def run_config(cfg: Config, ctx: GPUContext, progress=None):
 # sweep driver
 # ---------------------------------------------------------------------------
 
-def _worker(rank, world_size, configs, store_path, ctx_kwargs, verbose):
+def _worker(rank, world_size, configs, store_path, ctx_kwargs, verbose,
+            max_consecutive_failures=3):
     import torch
     device = f"cuda:{rank}" if torch.cuda.is_available() else "cpu"
     ctx = GPUContext(device=device, **ctx_kwargs)
     store = ResultStore(store_path.replace(".csv", f".rank{rank}.csv"))
 
+    import traceback
+
     mine = [c for i, c in enumerate(configs) if i % world_size == rank]
+    consecutive = 0
     for j, cfg in enumerate(mine):
         if cfg in store:
             continue
         try:
             metrics = run_config(cfg, ctx)
-        except Exception as exc:                      # keep the sweep alive
+        except Exception as exc:
+            # One failure may be transient (e.g. out of memory); keep going.
+            # Repeated failures are a bug, and continuing would silently burn
+            # GPU time on configurations that can never succeed.
+            consecutive += 1
             print(f"[rank {rank}] FAILED {cfg.describe()}: {exc!r}", flush=True)
+            if consecutive == 1:
+                traceback.print_exc()
+            if consecutive >= max_consecutive_failures:
+                raise RuntimeError(
+                    f"{consecutive} consecutive configurations failed on rank "
+                    f"{rank}; aborting the sweep.  Completed results are kept "
+                    f"and a re-run resumes from them."
+                ) from exc
             continue
+        consecutive = 0
         store.append(cfg, **metrics)
         if verbose:
             print(f"[rank {rank}] {j + 1}/{len(mine)}  {cfg.describe()}  "
@@ -304,7 +346,8 @@ def _worker(rank, world_size, configs, store_path, ctx_kwargs, verbose):
                   flush=True)
 
 
-def run_sweep(configs, store_path, ctx_kwargs, n_gpus=None, verbose=True):
+def run_sweep(configs, store_path, ctx_kwargs, n_gpus=None, verbose=True,
+              max_consecutive_failures=3):
     """Run every configuration not already present in the store.
 
     Returns the merged :class:`ResultStore`.  Safe to call repeatedly: work
@@ -316,6 +359,8 @@ def run_sweep(configs, store_path, ctx_kwargs, n_gpus=None, verbose=True):
     if n_gpus is None:
         n_gpus = max(1, torch.cuda.device_count())
 
+    # Fold in shards left behind by an earlier run that was interrupted.
+    _merge_shards(store_path)
     pending = [c for c in configs if c not in ResultStore(store_path)]
     if verbose:
         total_units = sum(c.expected_nfe * c.n_images for c in pending)
@@ -325,25 +370,29 @@ def run_sweep(configs, store_path, ctx_kwargs, n_gpus=None, verbose=True):
     if not pending:
         return ResultStore(store_path)
 
-    if n_gpus == 1:
-        _worker(0, 1, pending, store_path, ctx_kwargs, verbose)
-    else:
-        import torch.multiprocessing as mp
-        mp.spawn(_worker, nprocs=n_gpus,
-                 args=(n_gpus, pending, store_path, ctx_kwargs, verbose),
-                 join=True)
+    try:
+        if n_gpus == 1:
+            _worker(0, 1, pending, store_path, ctx_kwargs, verbose,
+                    max_consecutive_failures)
+        else:
+            import torch.multiprocessing as mp
+            mp.spawn(_worker, nprocs=n_gpus,
+                     args=(n_gpus, pending, store_path, ctx_kwargs, verbose,
+                           max_consecutive_failures),
+                     join=True)
+    finally:
+        # Even on abort, completed work lands in the canonical CSV.
+        _merge_shards(store_path)
 
-    return _merge_shards(store_path, n_gpus)
+    return ResultStore(store_path)
 
 
-def _merge_shards(store_path, n_gpus):
-    """Fold per-rank CSVs into the canonical store."""
+def _merge_shards(store_path, n_gpus=None):
+    """Fold every per-rank CSV into the canonical store, then delete it."""
     import csv
+    import glob
     main = ResultStore(store_path)
-    for rank in range(max(n_gpus, 1)):
-        shard = store_path.replace(".csv", f".rank{rank}.csv")
-        if not os.path.exists(shard):
-            continue
+    for shard in sorted(glob.glob(store_path.replace(".csv", ".rank*.csv"))):
         with open(shard, newline="") as f:
             rows = list(csv.DictReader(f))
         new = not os.path.exists(store_path) or os.path.getsize(store_path) == 0

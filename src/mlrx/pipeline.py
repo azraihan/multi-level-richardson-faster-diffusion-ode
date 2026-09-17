@@ -168,26 +168,59 @@ def run_gpu_stage(outdir, ctx_kwargs, n_images=10_000, nfe_grid=None,
 
     if do_rho_search:
         _log("rho search under FID")
-        ctx = GPUContext(device="cuda:0", **ctx_kwargs)
-        res, rows = rho_search.search_rho_fid(
-            ctx, store, n_images=n_images, max_eval=10)
-        save_table(rows, results, "rho_search_fid")
-        _log(f"  best rho = {res.x:.3f} (FID {res.f:.3f})")
+        try:
+            ctx = GPUContext(device="cuda:0", **ctx_kwargs)
+            res, rows = rho_search.search_rho_fid(
+                ctx, store, n_images=n_images, max_eval=10)
+            save_table(rows, results, "rho_search_fid")
+            _log(f"  best rho = {res.x:.3f} (FID {res.f:.3f})")
+        except Exception as exc:
+            # The sweep's results are already on disk; do not let this
+            # optional step prevent the figures from being built.
+            import traceback
+            traceback.print_exc()
+            _log(f"  rho search failed ({exc!r}); continuing to figures")
 
     df = store.dataframe()
     save_table(df, results, "fid_results_merged")
 
+    # Configurations shared between studies are run once and stored once
+    # (their key ignores the tag), so each figure selects its rows by the keys
+    # its own builder produces rather than by tag.
+    def rows_for(cfg_list):
+        if df.empty:
+            return df
+        keys = {c.key for c in cfg_list}
+        sub = df[df["key"].isin(keys)].copy()
+        return sub
+
+    groups = {
+        "validity": sweeps.build_validity_sweep(nfe_grid, n_images),
+        "panel": sweeps.build_main_panel(nfe_grid, n_images),
+        "multilevel": sweeps.build_multilevel_sweep(n_images=n_images),
+        "reuse": sweeps.build_reuse_sweep(n_images=n_images),
+        "seedblock": sweeps.build_seed_blocks(n_images=n_images),
+    }
     written = []
-    if not df.empty:
-        for tag in ("validity", "panel"):
-            if (df["tag"] == tag).any():
-                written += F.fig_fid_vs_nfe(df, figdir, tag=tag)
-        if (df["tag"] == "multilevel").any():
-            written += F.fig_multilevel_fid(df, figdir)
-        if (df["tag"] == "reuse").any():
-            written += F.fig_reuse_fid(df, figdir)
-        if (df["tag"] == "seedblock").any():
-            written += F.fig_seed_blocks(df, figdir)
+    sel = {name: rows_for(cfgs_) for name, cfgs_ in groups.items()}
+    for name, sub in sel.items():
+        if not sub.empty:
+            save_table(sub, results, f"fid__{name}")
+    if not sel["validity"].empty:
+        written += F.fig_fid_vs_nfe(sel["validity"], figdir, tag=None,
+                                    name="fid_vs_nfe__validity")
+    if not sel["panel"].empty:
+        written += F.fig_fid_vs_nfe(sel["panel"], figdir, tag=None,
+                                    name="fid_vs_nfe__panel")
+    if not sel["multilevel"].empty:
+        written += F.fig_multilevel_fid(sel["multilevel"], figdir)
+    if not sel["reuse"].empty:
+        written += F.fig_reuse_fid(sel["reuse"], figdir)
+    if not sel["seedblock"].empty:
+        written += F.fig_seed_blocks(sel["seedblock"], figdir)
+    rho_rows = df[df["tag"] == "rho_search"] if not df.empty else df
+    if len(rho_rows):
+        written += F.fig_rho_fid(rho_rows, figdir)
 
     _log(f"GPU stage done: {len(df)} rows, "
          f"{len([p for p in written if p.endswith('.pdf')])} figures")

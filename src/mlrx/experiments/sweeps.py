@@ -33,6 +33,32 @@ DEFAULT_NFE_GRID = (6, 8, 10, 12, 16, 20)
 GATE_NFE = 10
 
 
+def rx_edm_config(nfe, **kw):
+    """An RX+EDM configuration whose cost is exactly ``nfe``.
+
+    Heun steps cost two evaluations and RX steps one, so ``N`` total steps of
+    which ``h`` are Heun cost ``N + h``.  Giving Heun the first third of the
+    budget (``h = round(nfe / 3)``, ``N = nfe - h``) hits the target exactly and
+    leaves RX the low-noise tail, which is where the paper found the hybrid
+    works best.  Specifying ``heun_fraction`` instead would silently overspend:
+    half of ten steps as Heun costs fifteen evaluations, not ten.
+    """
+    h = int(round(nfe / 3))
+    cfg = Config(method="rx_edm", num_steps=nfe - h, n_heun_steps=h,
+                 frequency=2, n_levels=2, **kw)
+    assert cfg.expected_nfe == nfe, (nfe, cfg.expected_nfe)
+    return cfg
+
+
+def heun_steps_for(nfe):
+    """Heun step count whose cost ``2N - 1`` is closest to ``nfe`` from above.
+
+    Heun can only realise odd NFE.  Rounding up matches the paper's own
+    comparison, which sets Heun at NFE 11 against RX-Euler at NFE 10 (Fig. 6).
+    """
+    return nfe // 2 + 1
+
+
 def build_validity_sweep(nfe_grid=DEFAULT_NFE_GRID, n_images=10_000):
     """The paper's Figure 2: RX-Euler at several ``k`` against Euler and naive.
 
@@ -55,9 +81,9 @@ def build_validity_sweep(nfe_grid=DEFAULT_NFE_GRID, n_images=10_000):
 def build_main_panel(nfe_grid=DEFAULT_NFE_GRID, n_images=10_000):
     """The paper's Figure 3 panel: Euler, Heun (EDM), RX-Euler, RX+EDM.
 
-    Heun's step count is chosen so its NFE matches the grid: ``2N - 1 = nfe``.
-    Odd NFE values are therefore the ones Heun can hit exactly, which is why
-    the paper's Heun points sit at NFE 9, 11, ... rather than 10, 12.
+    Every arm is built to cost the grid NFE.  Heun can only realise odd NFE, so
+    its points sit one above the even grid values -- the same convention as the
+    paper's Fig. 6, which compares Heun at NFE 11 with RX-Euler at NFE 10.
     """
     cfgs = []
     for nfe in nfe_grid:
@@ -65,12 +91,9 @@ def build_main_panel(nfe_grid=DEFAULT_NFE_GRID, n_images=10_000):
                            n_images=n_images, tag="panel"))
         cfgs.append(Config(method="rx", num_steps=nfe, frequency=2, n_levels=2,
                            n_images=n_images, tag="panel"))
-        n_heun = (nfe + 1) // 2
-        cfgs.append(Config(method="heun", num_steps=n_heun,
+        cfgs.append(Config(method="heun", num_steps=heun_steps_for(nfe),
                            n_images=n_images, tag="panel"))
-        cfgs.append(Config(method="rx_edm", num_steps=nfe, frequency=2,
-                           n_levels=2, heun_fraction=0.5,
-                           n_images=n_images, tag="panel"))
+        cfgs.append(rx_edm_config(nfe, n_images=n_images, tag="panel"))
     return cfgs
 
 
@@ -138,11 +161,10 @@ def build_seed_blocks(n_blocks=3, nfe=GATE_NFE, n_images=10_000):
                            n_images=n_images, tag="seedblock"))
         cfgs.append(Config(method="rx", num_steps=nfe, frequency=2, n_levels=2,
                            seed_offset=b, n_images=n_images, tag="seedblock"))
-        cfgs.append(Config(method="heun", num_steps=(nfe + 1) // 2,
+        cfgs.append(Config(method="heun", num_steps=heun_steps_for(nfe),
                            seed_offset=b, n_images=n_images, tag="seedblock"))
-        cfgs.append(Config(method="rx_edm", num_steps=nfe, frequency=2,
-                           n_levels=2, seed_offset=b, n_images=n_images,
-                           tag="seedblock"))
+        cfgs.append(rx_edm_config(nfe, seed_offset=b, n_images=n_images,
+                                  tag="seedblock"))
     return cfgs
 
 

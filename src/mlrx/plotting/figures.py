@@ -22,7 +22,7 @@ __all__ = [
     "fig_convergence_order", "fig_reuse_ablation", "fig_conditioning_levels",
     "fig_weight_precision", "fig_vcurve", "fig_error_vs_levels", "fig_rho_scan", "fig_block_width",
     "fig_weight_values", "fig_fid_vs_nfe", "fig_multilevel_fid",
-    "fig_reuse_fid", "fig_seed_blocks", "fig_fid_sample_size",
+    "fig_reuse_fid", "fig_seed_blocks", "fig_rho_fid", "fig_fid_sample_size",
 ]
 
 METHOD_LABEL = {
@@ -358,7 +358,8 @@ def fig_fid_vs_nfe(df, outdir, tag="panel", name=None):
     """FID against NFE.  Used for both the validity test and the main panel."""
     apply_style()
     df = _df(df)
-    df = df[df["tag"] == tag] if "tag" in df else df
+    if tag is not None and "tag" in df:
+        df = df[df["tag"] == tag]
     name = name or f"fid_vs_nfe__{tag}"
 
     fig, ax = plt.subplots(figsize=figsize("single"))
@@ -386,11 +387,15 @@ def fig_fid_vs_nfe(df, outdir, tag="panel", name=None):
     return save_figure(fig, outdir, name, data=df)
 
 
-def fig_multilevel_fid(df, outdir, name="fid_multilevel_precision"):
+def fig_multilevel_fid(df, outdir, name="fid_multilevel_precision", tag=None):
     """FID against level count, one line per working precision."""
     apply_style()
     df = _df(df)
-    df = df[df["tag"] == "multilevel"] if "tag" in df else df
+    if tag is not None and "tag" in df:
+        df = df[df["tag"] == tag]
+
+    if "reuse_mode" in df:
+        df = df[df["reuse_mode"] == "denoised"]
 
     fig, ax = plt.subplots(figsize=figsize("single"))
     for i, prec in enumerate(["float64", "float32", "float16"]):
@@ -410,11 +415,12 @@ def fig_multilevel_fid(df, outdir, name="fid_multilevel_precision"):
     return save_figure(fig, outdir, name, data=df)
 
 
-def fig_reuse_fid(df, outdir, name="fid_reuse_vs_exact"):
+def fig_reuse_fid(df, outdir, name="fid_reuse_vs_exact", tag=None):
     """FID against NFE for reuse versus exact recomputation, by level count."""
     apply_style()
     df = _df(df)
-    df = df[df["tag"] == "reuse"] if "tag" in df else df
+    if tag is not None and "tag" in df:
+        df = df[df["tag"] == tag]
 
     fig, ax = plt.subplots(figsize=figsize("single"))
     i = 0
@@ -437,15 +443,17 @@ def fig_reuse_fid(df, outdir, name="fid_reuse_vs_exact"):
     return save_figure(fig, outdir, name, data=df)
 
 
-def fig_seed_blocks(df, outdir, name="fid_seed_blocks"):
+def fig_seed_blocks(df, outdir, name="fid_seed_blocks", tag=None):
     """FID at the validation gate with across-block spread as error bars."""
     apply_style()
     df = _df(df)
-    df = df[df["tag"] == "seedblock"] if "tag" in df else df
+    if tag is not None and "tag" in df:
+        df = df[df["tag"] == tag]
 
     df = df.copy()
     df["series"] = df.apply(
-        lambda r: METHOD_LABEL.get(r["method"], r["method"]), axis=1)
+        lambda r: f"{METHOD_LABEL.get(r['method'], r['method'])}\n"
+                  f"(NFE {int(r['nfe'])})", axis=1)
     g = df.groupby("series")["fid"].agg(["mean", "std", "count"]).reset_index()
     g = g.sort_values("mean")
     # standard error of the mean across independent seed blocks
@@ -457,10 +465,28 @@ def fig_seed_blocks(df, outdir, name="fid_seed_blocks"):
            color=[PALETTE[i % len(PALETTE)] for i in range(len(g))],
            capsize=3, error_kw=dict(lw=0.9, capthick=0.9, ecolor="0.25"))
     ax.set_xticks(xs)
-    ax.set_xticklabels(g["series"], rotation=18, ha="right")
+    ax.set_xticklabels(g["series"])
     ax.set_ylabel("FID")
     ax.grid(True, axis="y", alpha=0.75)
     return save_figure(fig, outdir, name, data={"summary": g, "raw": df})
+
+
+def fig_rho_fid(df, outdir, name="rho_search_fid"):
+    """FID at each schedule exponent the golden-section search evaluated."""
+    apply_style()
+    df = _df(df).sort_values("rho")
+
+    fig, ax = plt.subplots(figsize=figsize("single"))
+    ax.plot(df["rho"], df["fid"], linestyle="none", **series_style(0))
+    j = int(df["fid"].values.argmin())
+    ax.plot([df["rho"].values[j]], [df["fid"].values[j]], marker="o",
+            markersize=9, markerfacecolor="none", markeredgewidth=1.2,
+            color=PALETTE[0], linestyle="none")
+    ax.axvline(7.0, color="0.6", linewidth=0.9, linestyle="--")
+    ax.set_xlabel(r"schedule exponent $\rho$")
+    ax.set_ylabel("FID")
+    ax.grid(True, alpha=0.75)
+    return save_figure(fig, outdir, name, data=df)
 
 
 def fig_fid_sample_size(rows, outdir, name="fid_sample_size_bias"):

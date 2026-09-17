@@ -58,7 +58,9 @@ def block_lambdas(t_block, dtype=np.float64):
     sub-steps, in descending (denoising) order.  Returns ``K`` positive values
     summing to one.
     """
-    t = np.asarray(t_block, dtype=np.float64)
+    # float() per element rather than np.asarray: the block may hold 0-d torch
+    # tensors on a GPU, which numpy cannot convert directly.
+    t = np.array([float(v) for v in t_block], dtype=np.float64)
     if t.size < 2:
         raise ValueError("a block needs at least two time points")
     widths = t[:-1] - t[1:]
