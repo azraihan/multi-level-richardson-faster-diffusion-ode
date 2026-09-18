@@ -6,7 +6,7 @@ Sampling via Extrapolation with Multiple ODE Solutions*, ICLR 2025
 
 CSE 402 — Numerical Analysis, Simulation and Modeling Sessional, BUET.
 
-**Team:** Abrar Jahin Rayhan (2105009) · Sk. Ashrafuzzaman Nafees (2105008) ·
+**Team:** Abrar Zahin Raihan (2105009) · Sk. Ashrafuzzaman Nafees (2105008) ·
 Mahmud Hasan (2105027) · Mirza Tawhid Umar (2105028) · Fatin Sadab (2105029)
 
 ---
