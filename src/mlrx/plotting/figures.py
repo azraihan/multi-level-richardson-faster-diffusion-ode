@@ -49,6 +49,17 @@ def _df(x):
     return x if isinstance(x, pd.DataFrame) else pd.DataFrame(x)
 
 
+def _legend_below(ax, ncol=3, y=-0.30, fontsize=7.4):
+    """Put the legend under the axes.
+
+    Several of these plots have curves crossing the whole panel, leaving no
+    interior region a legend can occupy without covering data.  Moving it out
+    is more reliable than hunting for a free corner.
+    """
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, y), ncol=ncol,
+              fontsize=fontsize, frameon=False)
+
+
 def _loglog(ax):
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -83,7 +94,7 @@ def fig_convergence_order(rows, outdir, problem=None, name=None):
     ax.set_xlabel("number of solver steps $N$")
     ax.set_ylabel("RMS error")
     _loglog(ax)
-    ax.legend(ncol=1, loc="lower left")
+    _legend_below(ax, ncol=3)
     return save_figure(fig, outdir, name, data=df)
 
 
@@ -155,28 +166,31 @@ def fig_weight_precision(rows, outdir, name="weight_error_vs_precision"):
     df = _df(rows)
 
     fig, ax = plt.subplots(figsize=figsize("single"))
-    for i, prec in enumerate(["float64", "float32", "float16"]):
+    # float64 is the reference the others are measured against, so its error is
+    # identically zero and cannot be drawn on a log axis.  It is omitted rather
+    # than shown as an empty legend entry.
+    for i, prec in enumerate(["float32", "float16"]):
         sub = df[df["precision"] == prec].sort_values("n_levels")
         if sub.empty:
             continue
-        y = sub["weight_rel_error"].replace(0.0, np.nan)
-        ax.plot(sub["n_levels"], y, label=PREC_LABEL.get(prec, prec),
-                **series_style(i))
+        ax.plot(sub["n_levels"], sub["weight_rel_error"],
+                label=PREC_LABEL.get(prec, prec), **series_style(i + 1))
 
     for i, prec in enumerate(["float32", "float16"]):
         sub = df[df["precision"] == prec].sort_values("n_levels")
         if sub.empty:
             continue
-        ax.plot(sub["n_levels"], sub["predicted_error"], color=PALETTE[i + 1],
-                linestyle=":", linewidth=1.0, marker=None, alpha=0.75,
-                label=rf"$\varepsilon\,\kappa$ bound, {prec}" if i == 0 else None)
+        ax.plot(sub["n_levels"], sub["predicted_error"],
+                color=PALETTE[(i + 1) % len(PALETTE)],
+                linestyle=":", linewidth=1.0, marker=None, alpha=0.8,
+                label=rf"$\varepsilon\kappa$ bound ({PREC_LABEL[prec]})")
 
     ax.set_xlabel("extrapolation levels $L$")
     ax.set_ylabel("relative error in weights")
     ax.set_yscale("log")
     ax.set_xticks(sorted(df["n_levels"].unique()))
     ax.grid(True, which="major", alpha=0.8)
-    ax.legend(loc="upper left")
+    _legend_below(ax, ncol=2)
     return save_figure(fig, outdir, name, data=df)
 
 
@@ -279,7 +293,7 @@ def fig_rho_scan(scan_rows, outdir, search_rows=None, name="rho_scan"):
     ax.set_ylabel("RMS error")
     ax.set_yscale("log")
     ax.grid(True, which="major", alpha=0.8)
-    ax.legend(loc="upper right")
+    _legend_below(ax, ncol=2)
     return save_figure(fig, outdir, name, data={"scan": df,
                                                 "search": _df(search_rows)
                                                 if search_rows is not None else None})
@@ -335,8 +349,9 @@ def fig_weight_values(outdir, level_counts=(2, 3, 4, 5), rho=7.0,
     ax.axhline(0.0, color="0.5", linewidth=0.8)
     ax.set_xlabel("level index (coarsest to finest)")
     ax.set_ylabel("weight $w_n$")
+    ax.set_xticks(range(max(level_counts)))
     ax.grid(True, alpha=0.75)
-    ax.legend(loc="upper left")
+    _legend_below(ax, ncol=4)
     return save_figure(fig, outdir, name, data=records)
 
 
