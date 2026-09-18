@@ -1,0 +1,13 @@
+key,tag,method,num_steps,frequency,n_levels,coefficients,reuse_mode,rho,work_dtype,ode_dtype,net_dtype,n_images,seed_offset,n_heun_steps,heun_fraction,nfe,fid,max_cond,mean_amplification,max_amplification,wall_seconds,gpu
+55c4a1c4a3639a75,validity,euler,10,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,0,-1,0.5,10,17.13533754320052,,,,78.09,cuda:0
+124a977098010dc0,validity,rx,10,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,0,-1,0.5,10,6.118947890581671,22.65230918920708,5.199886060385239,10.32615459460354,77.74,cuda:0
+f0f30a53128c35ee,panel,rx_edm,7,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,0,3,0.5,10,10.637220071771912,53.61314955491759,15.94943288646472,25.806574777458795,89.26,cuda:0
+2d50d9631a197986,seedblock,euler,10,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,1,-1,0.5,10,17.60828293532109,,,,83.71,cuda:0
+3ce2c74c13c55515,seedblock,rx,10,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,1,-1,0.5,10,6.141306993880499,22.65230918920708,5.199886060385239,10.32615459460354,94.33,cuda:0
+8b48b53e1d8e63fc,seedblock,rx_edm,7,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,1,3,0.5,10,10.741820117191748,53.61314955491759,15.94943288646472,25.806574777458795,81.93,cuda:0
+acae16ba19321280,seedblock,euler,10,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,2,-1,0.5,10,17.70374857521774,,,,78.29,cuda:0
+2d092b9cfffdc693,seedblock,rx,10,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,2,-1,0.5,10,6.200732299956147,22.65230918920708,5.199886060385239,10.32615459460354,77.94,cuda:0
+05963e492f1cf843,seedblock,rx_edm,7,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,2,3,0.5,10,10.77376321636908,53.61314955491759,15.94943288646472,25.806574777458795,79.09,cuda:0
+41e27efb4857e66a,panel,heun,6,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,0,-1,0.5,11,16.605261844067307,,,,84.7,cuda:0
+b1489c8ce41f417b,seedblock,heun,6,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,1,-1,0.5,11,16.420569892880614,,,,85.84,cuda:0
+16cf7ce03c935561,seedblock,heun,6,2,2,grid_aware,denoised,7.0,float64,float64,float32,10000,2,-1,0.5,11,16.31952397335701,,,,84.42,cuda:0

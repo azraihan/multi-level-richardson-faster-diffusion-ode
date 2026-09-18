@@ -4,9 +4,6 @@ __pycache__/
 .DS_Store
 .ipynb_checkpoints/
 
-# generated
-outputs/
-*.zip
 
 # vendored assets (fetched by notebook 01, never committed)
 assets/

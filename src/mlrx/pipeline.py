@@ -214,6 +214,7 @@ def run_gpu_stage(outdir, ctx_kwargs, n_images=10_000, nfe_grid=None,
                                     name="fid_vs_nfe__panel")
     if not sel["multilevel"].empty:
         written += F.fig_multilevel_fid(sel["multilevel"], figdir)
+        written += F.fig_multilevel_precision(sel["multilevel"], figdir)
     if not sel["reuse"].empty:
         written += F.fig_reuse_fid(sel["reuse"], figdir)
     if not sel["seedblock"].empty:

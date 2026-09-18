@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.ticker import LogLocator, NullFormatter
+from matplotlib.ticker import LogLocator, MaxNLocator, NullFormatter
 
 from .style import apply_style, figsize, save_figure, series_style, PALETTE
 
@@ -22,7 +22,8 @@ __all__ = [
     "fig_convergence_order", "fig_reuse_ablation", "fig_conditioning_levels",
     "fig_weight_precision", "fig_vcurve", "fig_error_vs_levels", "fig_rho_scan", "fig_block_width",
     "fig_weight_values", "fig_fid_vs_nfe", "fig_multilevel_fid",
-    "fig_reuse_fid", "fig_seed_blocks", "fig_rho_fid", "fig_fid_sample_size",
+    "fig_reuse_fid", "fig_seed_blocks", "fig_rho_fid",
+    "fig_multilevel_precision", "fig_fid_sample_size",
 ]
 
 METHOD_LABEL = {
@@ -382,37 +383,102 @@ def fig_fid_vs_nfe(df, outdir, tag="panel", name=None):
 
     ax.set_xlabel("NFE")
     ax.set_ylabel("FID")
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.grid(True, alpha=0.75)
     ax.legend(loc="upper right")
     return save_figure(fig, outdir, name, data=df)
 
 
-def fig_multilevel_fid(df, outdir, name="fid_multilevel_precision", tag=None):
-    """FID against level count, one line per working precision."""
+def fig_multilevel_fid(df, outdir, name="fid_multilevel_levels", tag=None):
+    """FID against level count, one line per NFE budget.
+
+    Plotted per NFE rather than averaged over NFE: at eight evaluations the
+    three-level sampler scores 243 and at sixteen it scores 65, so a mean over
+    budgets would describe no configuration that was actually run.  The y-axis
+    is logarithmic because the spread across ``L`` is two orders of magnitude.
+
+    Precision is held at float64 here; :func:`fig_multilevel_precision`
+    reports the (negligible) effect of varying it.
+    """
     apply_style()
     df = _df(df)
     if tag is not None and "tag" in df:
         df = df[df["tag"] == tag]
-
     if "reuse_mode" in df:
         df = df[df["reuse_mode"] == "denoised"]
+    ref = df[df["work_dtype"] == "float64"] if "work_dtype" in df else df
 
     fig, ax = plt.subplots(figsize=figsize("single"))
-    for i, prec in enumerate(["float64", "float32", "float16"]):
-        sub = (df[df["work_dtype"] == prec]
+    for i, nfe in enumerate(sorted(ref["nfe"].dropna().unique())):
+        sub = (ref[ref["nfe"] == nfe]
                .groupby("n_levels", as_index=False)["fid"].mean()
                .sort_values("n_levels"))
         if sub.empty:
             continue
-        ax.plot(sub["n_levels"], sub["fid"], label=PREC_LABEL.get(prec, prec),
+        ax.plot(sub["n_levels"], sub["fid"], label=f"NFE {int(nfe)}",
                 **series_style(i))
 
     ax.set_xlabel("extrapolation levels $L$")
     ax.set_ylabel("FID")
-    ax.set_xticks(sorted(df["n_levels"].dropna().unique().astype(int)))
-    ax.grid(True, alpha=0.75)
-    ax.legend(loc="upper left")
-    return save_figure(fig, outdir, name, data=df)
+    ax.set_yscale("log")
+    ax.set_xticks(sorted(ref["n_levels"].dropna().unique().astype(int)))
+    ax.grid(True, which="major", alpha=0.8)
+    ax.legend(loc="lower right")
+    return save_figure(fig, outdir, name, data=ref)
+
+
+def fig_multilevel_precision(df, outdir, name="fid_multilevel_precision",
+                             tag=None):
+    """FID change from reducing the extrapolation arithmetic precision.
+
+    Reported as a percentage difference from float64 so that the comparison is
+    readable despite FID itself spanning two orders of magnitude across ``L``.
+    The result is a null: the bars are a couple of percent at most, confirming
+    on real data what the analytic study predicted -- at realistic step counts
+    truncation dominates and round-off in the weights never becomes the
+    limiting error.
+    """
+    apply_style()
+    df = _df(df)
+    if tag is not None and "tag" in df:
+        df = df[df["tag"] == tag]
+    if "reuse_mode" in df:
+        df = df[df["reuse_mode"] == "denoised"]
+
+    piv = df.pivot_table(index=["nfe", "n_levels"], columns="work_dtype",
+                         values="fid")
+    piv = piv.dropna(subset=["float64"])
+    rows, labels = [], []
+    for (nfe, L), r in piv.iterrows():
+        for prec in ("float32", "float16"):
+            if prec in r and np.isfinite(r[prec]):
+                rows.append({"nfe": int(nfe), "n_levels": int(L),
+                             "precision": prec, "fid": r[prec],
+                             "fid_float64": r["float64"],
+                             "pct_change": 100 * (r[prec] - r["float64"])
+                             / r["float64"]})
+        labels.append(f"{int(nfe)}/{int(L)}")
+
+    d = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=figsize("single"))
+    xs = np.arange(len(labels))
+    width = 0.38
+    for i, prec in enumerate(("float32", "float16")):
+        sub = d[d["precision"] == prec]
+        y = [float(sub[(sub.nfe == int(l.split("/")[0]))
+                       & (sub.n_levels == int(l.split("/")[1]))]["pct_change"]
+                   .squeeze() or 0.0) if len(sub) else 0.0 for l in labels]
+        ax.bar(xs + (i - 0.5) * width, y, width,
+               label=PREC_LABEL[prec], color=PALETTE[i + 1])
+
+    ax.axhline(0.0, color="0.4", linewidth=0.8)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(labels, rotation=0)
+    ax.set_xlabel("NFE / levels $L$")
+    ax.set_ylabel(r"change in FID vs float64 (\%)")
+    ax.grid(True, axis="y", alpha=0.75)
+    ax.legend(loc="best")
+    return save_figure(fig, outdir, name, data=d)
 
 
 def fig_reuse_fid(df, outdir, name="fid_reuse_vs_exact", tag=None):
@@ -438,8 +504,10 @@ def fig_reuse_fid(df, outdir, name="fid_reuse_vs_exact", tag=None):
 
     ax.set_xlabel("NFE")
     ax.set_ylabel("FID")
-    ax.grid(True, alpha=0.75)
-    ax.legend(loc="upper right", ncol=1)
+    ax.set_yscale("log")
+    ax.grid(True, which="major", alpha=0.8)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.30), ncol=2,
+              fontsize=6.8)
     return save_figure(fig, outdir, name, data=df)
 
 

@@ -66,6 +66,55 @@ reaching 4.36 / 5.67). Supporting results:
   (dense scan: 6.25) but not for RX (8.0) — though the objective is not cleanly
   unimodal, so golden-section search must be read with care.
 
+## Results on CIFAR-10
+
+Measured on an RTX PRO 6000, 10,000 images per FID, conditional CIFAR-10, EDM
+backbone, common random numbers across methods. ~2h20m for 80 configurations.
+
+**Validation gate** — mean ± std over 3 independent seed blocks:
+
+| Method | NFE | ours (10k imgs) | paper (50k imgs) |
+|---|---:|---:|---:|
+| Euler | 10 | 17.48 ± 0.30 | 15.88 |
+| Heun (EDM) | 11 | 16.45 ± 0.15 | 14.46 |
+| **RX-Euler (k=2)** | 10 | **6.15 ± 0.04** | 4.35 |
+| RX+EDM | 10 | 10.72 ± 0.07 | 4.26 |
+
+The reproduction holds: RX-Euler cuts FID by **2.8×** against Euler at equal
+NFE, and beats Heun even though Heun is given an extra evaluation. Absolute
+values sit above the published ones for the sample-size reason below, and the
+ordering is preserved. RX+EDM is the one disagreement — we find it *worse* than
+plain RX-Euler, where the paper finds it slightly better; our Heun/RX split is a
+reimplementation choice the paper does not fully specify.
+
+**Grid-aware coefficients beat the classical fixed ones** at every budget,
+reproducing the paper's Fig. 2 ablation (FID, k=2):
+
+| NFE | 6 | 8 | 10 | 12 | 16 | 20 |
+|---|---:|---:|---:|---:|---:|---:|
+| Naïve Richardson | 30.21 | 18.30 | 13.41 | 10.65 | 7.91 | 6.60 |
+| Grid-aware (RX) | 33.27 | **8.21** | **6.12** | **5.47** | **4.86** | **4.57** |
+
+**The extension fails on real data too, and by a wide margin.** FID at NFE 10:
+L=2 → 6.12, L=3 → 66.3, L=4 → 113.2. Exact recomputation helps but never
+recovers the cost: L=3 exact reaches 6.35 at NFE 20, still worse than L=2 reuse
+at 4.57 for the same budget. At L=2, reuse and exact agree to the last digit
+(6.12/6.12 at NFE 10, 4.86/4.86 at NFE 16) — the same identity the analytic
+study predicts, now confirmed on a real network.
+
+**Precision is a null result.** Dropping the extrapolation arithmetic to
+float32 changes FID by under 0.1%, and float16 by at most a couple of percent
+at the only usable setting (L=2). The analytic study explains why: at realistic
+step counts truncation dominates and round-off in the weights never becomes the
+limiting error. Round-off only matters once the grid is refined far past
+anything a sampler would use.
+
+**ρ = 7 is not optimal for RX.** Golden-section search over ρ ∈ [1, 15] under
+FID settles at **ρ ≈ 6.16 (FID 5.95)** against 6.12 at ρ = 7 — a real but small
+2.7% gain, consistent with the analytic scan. The objective is not cleanly
+unimodal, so this is best read as "the good region is near 6", not as a
+certified minimiser.
+
 ## Correctness
 
 `tests/test_reference_equivalence.py` transcribes the authors' published sampler
