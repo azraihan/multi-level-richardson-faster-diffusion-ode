@@ -40,6 +40,9 @@ Figures are in [`outputs/figures/`](results/outputs/figures) as PDF. Every figur
 its data in [`outputs/figures/data/`](results/outputs/figures/data). Tables are in
 [`outputs/results/`](results/outputs/results).
 
+The full run is public on Kaggle:
+**[02-run-pipeline-offline](https://www.kaggle.com/code/raihanzahin/02-run-pipeline-offline)**.
+
 ---
 
 ## 1. The reproduction works
@@ -292,6 +295,9 @@ Two Kaggle notebooks. The first needs internet, the second does not.
 2. **`notebooks/02_run_pipeline_offline.ipynb`** — Internet **OFF**, GPU on.
    Add notebook 01's output via **+ Add Input → Your Work → Notebooks**, set
    `PREFETCH_NAME` to its slug (or leave `None` to auto-discover), Run All.
+
+The run that produced every number below is public on Kaggle:
+**[02-run-pipeline-offline](https://www.kaggle.com/code/raihanzahin/02-run-pipeline-offline)**.
 
 The GPU sweep is **resumable**. Finished runs are appended to
 `results/fid_results.csv` and skipped next time, so a session that times out
