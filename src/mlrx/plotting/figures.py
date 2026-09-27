@@ -314,7 +314,7 @@ def fig_block_width(rows, outdir, name="conditioning_vs_block"):
         ax.plot(sub["frequency"], sub["cond"], label=rf"$L={L}$",
                 **series_style(i))
 
-    ax.set_xlabel("block length $K$ (base steps)")
+    ax.set_xlabel("block length $k$ (base steps)")
     ax.set_ylabel(r"$\kappa_\infty(M)$")
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")

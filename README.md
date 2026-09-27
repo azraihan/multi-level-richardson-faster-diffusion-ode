@@ -76,7 +76,7 @@ FID across the whole budget range:
 
 ## 2. Grid-aware coefficients beat the classical ones
 
-This is the paper's main claim. It holds at every budget.
+This is the paper's main claim. It holds at every budget from NFE 8 upward.
 
 | NFE | 6 | 8 | 10 | 12 | 16 | 20 |
 |---|---:|---:|---:|---:|---:|---:|
