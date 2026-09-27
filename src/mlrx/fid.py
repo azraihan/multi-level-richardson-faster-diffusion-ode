@@ -88,9 +88,11 @@ class FIDAccumulator:
         img = images_uint8
         if img.shape[1] == 1:
             img = img.repeat([1, 3, 1, 1])
+        # feats is (B, 2048): one pool3 feature vector per image.  Only the
+        # running sums are kept, so memory stays at one batch regardless of n.
         feats = detector(img.to(self.device), return_features=True).to(torch.float64)
-        self._sum += feats.sum(0)
-        self._sqsum += feats.T @ feats
+        self._sum += feats.sum(0)                 # sum of f
+        self._sqsum += feats.T @ feats            # sum of outer products f f^T
         self.n += int(img.shape[0])
 
     def merge(self, other):
@@ -104,6 +106,8 @@ class FIDAccumulator:
         """Return ``(mu, sigma)`` as numpy float64 arrays."""
         if self.n < 2:
             raise ValueError(f"need at least 2 samples for a covariance, got {self.n}")
+        # Unbiased sample covariance from the raw sums:
+        #   Sigma = (sum f f^T - n mu mu^T) / (n - 1)
         mu = self._sum / self.n
         sigma = (self._sqsum - torch.outer(mu, mu) * self.n) / (self.n - 1)
         return mu.cpu().numpy(), sigma.cpu().numpy()
@@ -124,6 +128,8 @@ def frechet_distance(mu, sigma, mu_ref, sigma_ref):
     PSD matrices is real in exact arithmetic, but round-off leaves a small
     imaginary component that must be discarded rather than propagated.
     """
+    # First term: how far apart the feature means are.  Second: how different
+    # the spreads are.  Both vanish only when the two Gaussians coincide.
     diff = np.square(mu - mu_ref).sum()
     covmean, _ = scipy.linalg.sqrtm(np.dot(sigma, sigma_ref), disp=False)
     return float(np.real(diff + np.trace(sigma + sigma_ref - covmean * 2)))

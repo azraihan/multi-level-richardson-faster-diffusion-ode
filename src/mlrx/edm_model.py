@@ -92,8 +92,12 @@ def load_edm_network(pkl_path, device="cuda", edm_root=None, net_dtype=None):
     network in float32, which is EDM's default and what published FIDs use.
     """
     ensure_edm_on_path(edm_root)
+    # The pickle stores the weights plus a reference to the defining class, not
+    # the class itself -- hence ensure_edm_on_path above.  It also holds the raw
+    # training weights; "ema" is the exponential moving average used for sampling.
     with open(pkl_path, "rb") as f:
         net = pickle.load(f)["ema"]
+    # Inference only: no dropout/batch-norm updates, no gradient buffers.
     net = net.to(device).eval()
     for p in net.parameters():
         p.requires_grad_(False)
@@ -121,6 +125,10 @@ class StackedRandomGenerator:
     """
 
     def __init__(self, device, seeds):
+        # One generator per sample rather than one shared by the batch.  With a
+        # shared generator, the noise a sample receives depends on its position
+        # in the batch; with one each, seed s gives the same latent whatever the
+        # batch size, batch order or number of GPUs.
         self.generators = [
             torch.Generator(device).manual_seed(int(seed) % (1 << 32))
             for seed in seeds
@@ -156,6 +164,10 @@ def make_latents(net, seeds, device="cuda", ode_dtype=torch.float64,
         device=device,
     ).to(ode_dtype)
 
+    # The class is drawn from the same per-seed generator, after the noise, so a
+    # seed fixes both its latent and its class.  The network expects one-hot
+    # rows, e.g. class 7 of 10 -> [0,0,0,0,0,0,0,1,0,0]; indexing the identity
+    # matrix by the class index produces exactly that.
     class_labels = None
     if getattr(net, "label_dim", 0):
         idx = rnd.randint(net.label_dim, size=[len(seeds)], device=device)

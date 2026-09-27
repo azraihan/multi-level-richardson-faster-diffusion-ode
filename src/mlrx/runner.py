@@ -59,6 +59,8 @@ class Config:
     @property
     def key(self):
         """Stable identity used for resume.  Order-independent and readable."""
+        # "tag" is excluded so that the same config requested by two studies
+        # (e.g. Euler at NFE 10 in both "validity" and "panel") is run once.
         d = {k: v for k, v in sorted(asdict(self).items()) if k != "tag"}
         blob = json.dumps(d, sort_keys=True, default=str)
         return hashlib.sha1(blob.encode()).hexdigest()[:16]
@@ -164,6 +166,8 @@ class ResultStore:
             if new:
                 w.writeheader()
             w.writerow(row)
+            # flush() empties Python's buffer; fsync() makes the OS write it to
+            # disk now, so a session killed a moment later still keeps the row.
             f.flush()
             os.fsync(f.fileno())
         self._done.add(cfg.key)
@@ -247,10 +251,16 @@ def run_config(cfg: Config, ctx: GPUContext, progress=None):
     acc = fid_mod.FIDAccumulator(device=ctx.device)
     weights_seen, nfe_seen = [], None
 
+    # Seed block b uses seeds [b * 1e6, b * 1e6 + n_images).  Every config with
+    # the same seed_offset therefore starts from identical latents and classes
+    # (common random numbers); different offsets give disjoint, independent
+    # blocks for the error bars.
     base_seed = cfg.seed_offset * 1_000_000
     seeds_all = range(base_seed, base_seed + cfg.n_images)
     seeds_all = list(seeds_all)
 
+    # Per batch: fixed latents -> sampler (which calls the network once per
+    # NFE) -> uint8 images -> Inception features into the running FID sums.
     for i in range(0, len(seeds_all), ctx.batch_size):
         seeds = seeds_all[i:i + ctx.batch_size]
         latents, class_labels = edm_model.make_latents(
@@ -316,6 +326,9 @@ def _worker(rank, world_size, configs, store_path, ctx_kwargs, verbose,
 
     import traceback
 
+    # Round-robin split: with two GPUs rank 0 takes configs 0, 2, 4, ... and
+    # rank 1 takes 1, 3, 5, ...  Because the list is sorted by cost, this also
+    # keeps the ranks' workloads roughly balanced.  With one GPU, rank 0 takes all.
     mine = [c for i, c in enumerate(configs) if i % world_size == rank]
     consecutive = 0
     for j, cfg in enumerate(mine):
@@ -355,6 +368,9 @@ def run_sweep(configs, store_path, ctx_kwargs, n_gpus=None, verbose=True,
     """
     import torch
 
+    # Cheapest first (cost = network evaluations = NFE x images): a session that
+    # runs out of time has then finished as many configs as possible, and a
+    # broken setup fails within the first minute rather than an hour in.
     configs = sorted(configs, key=lambda c: (c.expected_nfe * c.n_images))
     if n_gpus is None:
         n_gpus = max(1, torch.cuda.device_count())
