@@ -167,40 +167,6 @@ def rx_sampler(
     **_,
 ):
     """RX-DPM with an arbitrary number of nested extrapolation levels.
-
-    ``n_levels=2`` reproduces the published method exactly (and, with
-    ``coefficients="grid_aware"``, reproduces the reference implementation bit
-    for bit).  ``n_levels>2`` is this project's extension.
-
-    Parameters
-    ----------
-    denoiser : callable
-    x_init : array or tensor
-        Initial state at ``t_steps[0]``, i.e. ``latents * t_steps[0]``.
-    t_steps : sequence
-        ``N + 1`` descending noise levels ending at zero.
-    frequency : int
-        Block length ``K``.  Must be a power of two to support more than two
-        levels nestedly.
-    n_levels : int
-        Number of levels ``L``.  Cancels ``L - 1`` error terms.
-    p : int
-        Local order of the base solver; ``2`` for Euler.
-    skip_last : bool
-        Remainder handling -- see :func:`mlrx.schedules.partition_blocks`.
-    coefficients : {"grid_aware", "naive"}
-        ``"grid_aware"`` solves the moment system on the actual step widths
-        (the paper's contribution).  ``"naive"`` uses the fixed uniform-grid
-        coefficients of classical Richardson extrapolation (their Fig. 2
-        ablation); only meaningful at two levels.
-    reuse_mode : {"denoised", "derivative"}
-        How coarse levels reuse fine-trajectory evaluations; see module
-        docstring.  Irrelevant at two levels, where nothing is approximated.
-    work_dtype : numpy dtype or None
-        Precision for the weight solve *and* the extrapolation combination.
-        ``None`` leaves both at the state's native precision.  This is the knob
-        the round-off study turns.
-
     Returns
     -------
     SamplerResult
@@ -312,17 +278,6 @@ def rx_edm_sampler(
     **kwargs,
 ):
     """The RX+EDM hybrid of the paper's Figure 3.
-
-    RX-Euler is strongest at low NFE and Heun catches up at higher NFE, which
-    the authors read as the two methods suiting different parts of the
-    trajectory: interpolation (Heun) is safer early, where predictions are
-    close to noise and less accurate, while extrapolation (RX) pays off later.
-    They therefore run Heun on the early, high-noise steps and RX-Euler on the
-    remaining low-noise steps.
-
-    ``n_heun_steps`` sets the split explicitly; otherwise ``heun_fraction`` of
-    the steps go to Heun.  Note the NFE is *not* ``N``: Heun steps cost two
-    evaluations each, so comparisons must be made against NFE, not step count.
     """
     num_steps = len(t_steps) - 1
     if n_heun_steps is None:

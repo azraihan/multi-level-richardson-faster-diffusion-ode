@@ -185,36 +185,114 @@ def nested_steps(frequency, n_levels):
 
     Returns ascending counts beginning at 1 and ending at ``frequency``, each
     dividing the next.  Nestedness is what keeps the coarse estimates free, so
-    a requested level count that cannot be realised nestedly is rejected rather
-    than silently approximated.
+    a requested level count that cannot be realised nestedly is rejected with
+    ``ValueError`` rather than silently approximated.  Every caller relies on
+    that: the samplers and the cost model catch it and run the block plainly.
 
-    ``nested_steps(8, 4) -> [1, 2, 4, 8]``; ``nested_steps(4, 3) -> [1, 2, 4]``.
+    ``nested_steps(8, 4) -> [1, 2, 4, 8]``; ``nested_steps(4, 3) -> [1, 2, 4]``;
+    ``nested_steps(6, 3) -> [1, 2, 6]``.  A chain of ``L`` levels exists only
+    when ``K`` has at least ``L - 1`` prime factors counted with multiplicity,
+    so ``nested_steps(7, 3)`` is rejected.
     """
     if n_levels < 2:
         raise ValueError("extrapolation needs at least two levels")
     if frequency < 2:
         raise ValueError("frequency must be at least 2 to extrapolate")
+    if int(frequency) != frequency or int(n_levels) != n_levels:
+        raise ValueError(
+            f"frequency and n_levels must be integers, got {frequency!r}, "
+            f"{n_levels!r}")
+    K, L = int(frequency), int(n_levels)
 
-    # Powers of two are the natural nested chain; fall back to any divisor
-    # chain of the right length when frequency is not a power of two.
+    # Powers of two are the natural nested chain.  This choice is kept first,
+    # unchanged, because every published result was produced with it.
+    chain = _power_of_two_spread(K, L)
+    if chain is None or not _is_nested_chain(chain, K, L):
+        # Not a power of two and the spread broke nestedness (e.g. K=6, L=3
+        # gives [1, 4, 6]): search for a genuine divisor chain instead.
+        chain = _closest_divisor_chain(K, L)
+    if chain is None:
+        raise ValueError(
+            f"frequency={K} admits at most {_max_nested_levels(K)} nested "
+            f"levels, {L} requested (use a power-of-two frequency such as "
+            f"{2 ** (L - 1)})"
+        )
+    assert _is_nested_chain(chain, K, L), chain     # the contract, checked
+    return chain
+
+
+def _power_of_two_spread(K, L):
+    """The original heuristic: powers of two below ``K``, then ``K``, thinned
+    to ``L`` entries.  ``None`` when there are too few.  Always nested when
+    ``K`` is a power of two; possibly not otherwise."""
     chain = [1]
-    while chain[-1] * 2 < frequency:
+    while chain[-1] * 2 < K:
         chain.append(chain[-1] * 2)
-    chain.append(frequency)
+    chain.append(K)
     chain = sorted(set(chain))
 
-    if len(chain) < n_levels:
-        raise ValueError(
-            f"frequency={frequency} admits at most {len(chain)} nested levels, "
-            f"{n_levels} requested (use a power-of-two frequency such as "
-            f"{2 ** (n_levels - 1)})"
-        )
+    if len(chain) < L:
+        return None
+    if len(chain) == L:
+        return chain
 
     # Keep the coarsest, the finest, and spread the rest between them.
-    if len(chain) == n_levels:
-        return chain
-    idx = np.unique(np.round(np.linspace(0, len(chain) - 1, n_levels)).astype(int))
-    while idx.size < n_levels:                      # pragma: no cover - safety
+    idx = np.unique(np.round(np.linspace(0, len(chain) - 1, L)).astype(int))
+    while idx.size < L:                             # pragma: no cover - safety
         missing = set(range(len(chain))) - set(idx.tolist())
         idx = np.sort(np.append(idx, sorted(missing)[0]))
     return [chain[i] for i in idx]
+
+
+def _is_nested_chain(chain, K, L):
+    """``chain`` has ``L`` entries, runs from 1 to ``K``, each dividing the
+    next and strictly increasing."""
+    return (len(chain) == L and chain[0] == 1 and chain[-1] == K
+            and all(b > a and b % a == 0 for a, b in zip(chain, chain[1:])))
+
+
+def _max_nested_levels(K):
+    """Longest nested chain from 1 to ``K``: one level per prime factor of
+    ``K`` (with multiplicity), plus the single-step level."""
+    count, n, f = 0, K, 2
+    while f * f <= n:
+        while n % f == 0:
+            n //= f
+            count += 1
+        f += 1
+    return count + (1 if n > 1 else 0) + 1
+
+
+def _closest_divisor_chain(K, L):
+    """The nested chain ``1 = c_0 | c_1 | ... | c_{L-1} = K`` whose levels are
+    closest to evenly spaced in ``log(steps)`` -- the geometric spacing a
+    power-of-two chain has exactly.  ``None`` if no chain of length ``L``
+    exists.  Ties go to the lexicographically smallest chain, so the result
+    is deterministic.
+
+    Dynamic programming over (level, divisor): ``O(L * d(K)^2)`` for ``d(K)``
+    divisors, so it stays cheap for any block length a sampler would use.
+    """
+    if _max_nested_levels(K) < L:
+        return None
+    divisors = [n for n in range(1, K + 1) if K % n == 0]
+    target = [i / (L - 1) * np.log(K) for i in range(L)]
+
+    def cost(level, n):
+        # Rounded so that mathematically equal costs (e.g. K=6: log 2 and
+        # log 3 are equally far from log sqrt 6) tie exactly, not by float
+        # noise, and the tie-break below decides.
+        return round((np.log(n) - target[level]) ** 2, 9)
+
+    # best[n] = (total cost, chain) over chains of the current length ending at n
+    best = {1: (0.0, [1])}
+    for level in range(1, L):
+        nxt = {}
+        for n in divisors:
+            for a, (c, ch) in best.items():
+                if n > a and n % a == 0:
+                    cand = (round(c + cost(level, n), 9), ch + [n])
+                    if n not in nxt or cand < nxt[n]:
+                        nxt[n] = cand
+        best = nxt
+    return best[K][1] if K in best else None
