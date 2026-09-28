@@ -29,7 +29,11 @@ __all__ = [
     "estimate_cost",
 ]
 
+# The NFE values we test across all sweeps (Number of Function Evaluations,
+# i.e. how many times the neural network is called per image).
 DEFAULT_NFE_GRID = (6, 8, 10, 12, 16, 20)
+
+# NFE used for the single "gate" comparison (the headline number in the paper).
 GATE_NFE = 10
 
 
@@ -43,9 +47,13 @@ def rx_edm_config(nfe, **kw):
     works best.  Specifying ``heun_fraction`` instead would silently overspend:
     half of ten steps as Heun costs fifteen evaluations, not ten.
     """
+    # Assign the first third of the budget to Heun (2nd-order, higher quality
+    # early in the trajectory) and the rest to RX-Euler (cheap extrapolation
+    # that works well at low noise).
     h = int(round(nfe / 3))
     cfg = Config(method="rx_edm", num_steps=nfe - h, n_heun_steps=h,
                  frequency=2, n_levels=2, **kw)
+    # Sanity check: the Config must agree that its own NFE matches what we asked.
     assert cfg.expected_nfe == nfe, (nfe, cfg.expected_nfe)
     return cfg
 
@@ -56,6 +64,7 @@ def heun_steps_for(nfe):
     Heun can only realise odd NFE.  Rounding up matches the paper's own
     comparison, which sets Heun at NFE 11 against RX-Euler at NFE 10 (Fig. 6).
     """
+    # Heun costs 2N-1 evaluations. Given a target NFE, solve for N (rounded up).
     return nfe // 2 + 1
 
 
@@ -67,11 +76,19 @@ def build_validity_sweep(nfe_grid=DEFAULT_NFE_GRID, n_images=10_000):
     """
     cfgs = []
     for nfe in nfe_grid:
+        # Plain Euler: the cheapest baseline, order 1.
         cfgs.append(Config(method="euler", num_steps=nfe,
                            n_images=n_images, tag="validity"))
+
+        # RX-Euler with different block sizes k=2,3,4 — tests whether the
+        # frequency (how many fine steps per block) matters.
         for k in (2, 3, 4):
             cfgs.append(Config(method="rx", num_steps=nfe, frequency=k,
                                n_levels=2, n_images=n_images, tag="validity"))
+
+        # Naïve Richardson: uses fixed uniform-grid coefficients instead of the
+        # grid-aware ones. This is the ablation that shows WHY the paper's
+        # non-uniform correction matters.
         cfgs.append(Config(method="rx", num_steps=nfe, frequency=2, n_levels=2,
                            coefficients="naive", n_images=n_images,
                            tag="validity"))
@@ -87,12 +104,21 @@ def build_main_panel(nfe_grid=DEFAULT_NFE_GRID, n_images=10_000):
     """
     cfgs = []
     for nfe in nfe_grid:
+        # Euler: 1st-order baseline. Simple but cheapest.
         cfgs.append(Config(method="euler", num_steps=nfe,
                            n_images=n_images, tag="panel"))
+
+        # RX-Euler (k=2): the paper's main proposed method.
         cfgs.append(Config(method="rx", num_steps=nfe, frequency=2, n_levels=2,
                            n_images=n_images, tag="panel"))
+
+        # Heun (EDM): 2nd-order corrector, costs one extra eval per step.
+        # Step count is chosen so the total NFE just meets or exceeds the target.
         cfgs.append(Config(method="heun", num_steps=heun_steps_for(nfe),
                            n_images=n_images, tag="panel"))
+
+        # RX+EDM: hybrid that uses Heun for the first third of steps and
+        # RX-Euler for the remainder.
         cfgs.append(rx_edm_config(nfe, n_images=n_images, tag="panel"))
     return cfgs
 
@@ -110,10 +136,17 @@ def build_multilevel_sweep(level_counts=(2, 3, 4), nfe_grid=(8, 10, 16),
     cfgs = []
     for nfe in nfe_grid:
         for L in level_counts:
+            # The minimum block size that supports L nested levels is 2^(L-1).
+            # For example: L=2 → K=2, L=3 → K=4, L=4 → K=8.
             K = 2 ** (L - 1)
+
+            # Skip combinations where the block is larger than the total budget.
             if K > nfe:
                 continue
+
             for prec in precisions:
+                # work_dtype controls the precision of the weight solve and the
+                # final weighted combination — the ODE state stays in float64.
                 cfgs.append(Config(
                     method="rx", num_steps=nfe, frequency=K, n_levels=L,
                     work_dtype=prec, n_images=n_images, tag="multilevel",
@@ -140,6 +173,10 @@ def build_reuse_sweep(level_counts=(2, 3, 4), nfe_grid=(10, 16),
             if K > nfe:
                 continue
             for mode in ("denoised", "exact"):
+                # "denoised" reuses the neural network output from the fine pass
+                # — free but approximate at L≥3.
+                # "exact" re-evaluates the network for each coarse level
+                # — honest but costs extra NFE.
                 cfgs.append(Config(
                     method="rx", num_steps=nfe, frequency=K, n_levels=L,
                     reuse_mode=mode, n_images=n_images, tag="reuse",
@@ -157,6 +194,9 @@ def build_seed_blocks(n_blocks=3, nfe=GATE_NFE, n_images=10_000):
     """
     cfgs = []
     for b in range(n_blocks):
+        # Each block b uses a different starting seed, so the 10k latents are
+        # completely independent from block to block → real statistical spread.
+        # Within a block, all methods share the same latents → fair comparison.
         cfgs.append(Config(method="euler", num_steps=nfe, seed_offset=b,
                            n_images=n_images, tag="seedblock"))
         cfgs.append(Config(method="rx", num_steps=nfe, frequency=2, n_levels=2,
@@ -171,6 +211,7 @@ def build_seed_blocks(n_blocks=3, nfe=GATE_NFE, n_images=10_000):
 def build_all(n_images=10_000, nfe_grid=DEFAULT_NFE_GRID, include_reuse=True):
     """Every GPU configuration, de-duplicated by key."""
     cfgs = []
+    # Collect configs from every individual sweep.
     cfgs += build_validity_sweep(nfe_grid, n_images)
     cfgs += build_main_panel(nfe_grid, n_images)
     cfgs += build_multilevel_sweep(n_images=n_images)
@@ -178,6 +219,9 @@ def build_all(n_images=10_000, nfe_grid=DEFAULT_NFE_GRID, include_reuse=True):
         cfgs += build_reuse_sweep(n_images=n_images)
     cfgs += build_seed_blocks(n_images=n_images)
 
+    # Deduplicate: the same physical config (e.g. Euler at NFE 10) appears in
+    # multiple sweeps but should only be run once. The key ignores the "tag"
+    # field so these overlaps are detected correctly.
     seen, out = set(), []
     for c in cfgs:
         if c.key not in seen:
@@ -197,13 +241,21 @@ def estimate_cost(configs, throughput_img_nfe_per_s=157.0, n_gpus=2,
     completed -- :func:`mlrx.runner.run_config` records ``wall_seconds`` for
     exactly this purpose.
     """
+    # Total work = sum over all configs of (NFE per image × number of images).
+    # This is the same unit the throughput estimate is expressed in.
     units = sum(c.expected_nfe * c.n_images for c in configs)
+
+    # Time to generate all images, ignoring FID computation overhead.
     gen_s = units / max(throughput_img_nfe_per_s, 1e-9)
+
+    # Add a fixed per-config overhead for computing the FID score itself
+    # (Inception feature extraction over 10k images takes ~1 minute).
     total_s = gen_s + fid_overhead_s * len(configs)
+
     return {
         "n_configs": len(configs),
-        "image_nfe": units,
-        "gpu_seconds": total_s,
+        "image_nfe": units,          # total network calls across all images
+        "gpu_seconds": total_s,      # total GPU-seconds if running on 1 GPU
         "gpu_hours": total_s / 3600.0,
-        "wall_hours": total_s / 3600.0 / max(n_gpus, 1),
+        "wall_hours": total_s / 3600.0 / max(n_gpus, 1),  # actual clock time
     }
